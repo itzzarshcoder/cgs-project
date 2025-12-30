@@ -89,7 +89,7 @@ app.use("/api/reports", reportRoutes);
 app.use("/api/dashboard", dashboardRoutes);
 
 
-app.get("/", (_, res) => res.send("E-commerce backend running ✅"));
+app.get("/", (_, res) => res.send("E-commerce backend running correctly ✅"));
 
 const PORT = process.env.PORT || 3000;
 
