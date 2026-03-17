@@ -1,0 +1,1349 @@
+import { useState, useEffect } from "react";
+import { AdminLayout } from "@/components/AdminLayout";
+import { Button, buttonVariants } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Search, MoreVertical, Image as ImageIcon, X, Plus, Settings } from "lucide-react";
+import { Switch } from "@/components/ui/switch";
+import { Textarea } from "@/components/ui/textarea";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from "@/components/ui/dialog";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { useNavigate } from "react-router-dom";
+import { getAllProducts, updateProduct, deleteProduct, getLowStockProducts, updateLowStockSettings, updateProductStock, setStockThresholds } from "@/adminApi/productApi";
+import { getAllCategories, getAllSubCategories } from "@/adminApi/categoryApi";
+import { toast } from "sonner";
+import { Badge } from "@/components/ui/badge";
+import Barcode from "react-barcode";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
+import { Label } from "@/components/ui/label";
+
+export default function InventoryTracking() {
+  const navigate = useNavigate();
+  const [products, setProducts] = useState<any[]>([]);
+  const [lowStockProducts, setLowStockProducts] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [formLoading, setFormLoading] = useState(false);
+  const [searchTerm, setSearchTerm] = useState("");
+  const [currentPage, setCurrentPage] = useState(1);
+  const [emailAlert, setEmailAlert] = useState(true);
+  const [pushAlert, setPushAlert] = useState(false);
+  const itemsPerPage = 10;
+
+  // State for forms and dialogs
+  const [editingProduct, setEditingProduct] = useState(null);
+  const [viewingProduct, setViewingProduct] = useState(null);
+  const [showForm, setShowForm] = useState(false);
+  const [showStockUpdate, setShowStockUpdate] = useState(false);
+  const [stockUpdateProduct, setStockUpdateProduct] = useState<any>(null);
+  const [newStockValue, setNewStockValue] = useState("");
+  const [thresholdDialogOpen, setThresholdDialogOpen] = useState(false);
+  const [thresholdProduct, setThresholdProduct] = useState<any>(null);
+  const [thresholdLow, setThresholdLow] = useState("");
+  const [thresholdMax, setThresholdMax] = useState("");
+  const [viewThresholdsDialogOpen, setViewThresholdsDialogOpen] = useState(false);
+  const [categories, setCategories] = useState<any[]>([]);
+  const [subCategories, setSubCategories] = useState<any[]>([]);
+  const [imagePreview, setImagePreview] = useState(null);
+  const [imageFile, setImageFile] = useState(null);
+  const [errors, setErrors] = useState<any>({});
+  const [formData, setFormData] = useState({
+    productName: "", category: "", subcategory: "", mrp: "", costPrice: "", stock: "", gst: "",
+    brandName: "", company: "", itemCode: "", hsnCode: "", size: "",
+    discount: "", packSize: "", description: "", image: "",
+  });
+
+  useEffect(() => {
+    const token = localStorage.getItem("token");
+    if (!token) {
+      navigate("/login");
+    } else {
+      fetchProducts();
+      fetchCategories();
+      fetchSubCategories();
+      fetchLowStock();
+    }
+  }, [navigate]);
+
+  const fetchProducts = async () => {
+    setLoading(true);
+    try {
+      // @ts-ignore
+      const res = await getAllProducts({ limit: 10000 });
+      
+      let productData = [];
+      
+      // Robust response parsing similar to ProductManagement
+      if (res.data?.data?.rows && Array.isArray(res.data.data.rows)) {
+        productData = res.data.data.rows;
+      } else if (res.data?.data?.products && Array.isArray(res.data.data.products)) {
+        productData = res.data.data.products;
+      } else if (res.data?.rows && Array.isArray(res.data.rows)) {
+        productData = res.data.rows;
+      } else if (res.data?.products && Array.isArray(res.data.products)) {
+        productData = res.data.products;
+      } else if (res.data?.data && Array.isArray(res.data.data)) {
+        productData = res.data.data;
+      } else if (Array.isArray(res.data)) {
+        productData = res.data;
+      } else if (res.data?.items && Array.isArray(res.data.items)) {
+        productData = res.data.items;
+      }
+
+      const mappedProducts = Array.isArray(productData) ? productData.map(p => ({...p, stock: p.stock ?? 0})) : [];
+      
+      // Sort by stock ascending (low stock first)
+      mappedProducts.sort((a, b) => {
+        const stockA = a.stock ?? 0;
+        const stockB = b.stock ?? 0;
+        if (stockA !== stockB) return stockA - stockB;
+        return (a.itemCode || "").localeCompare(b.itemCode || "");
+      });
+
+      setProducts(mappedProducts);
+    } catch (err) {
+      console.error("Fetch error:", err);
+      setProducts([]);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const fetchCategories = async () => {
+    try {
+      // @ts-ignore
+      const res = await getAllCategories({ limit: 10000 });
+      let categoryData = [];
+      if (res?.data?.data?.rows && Array.isArray(res.data.data.rows)) {
+        categoryData = res.data.data.rows;
+      } else if (res?.data?.rows && Array.isArray(res.data.rows)) {
+        categoryData = res.data.rows;
+      } else if (res?.data?.categories && Array.isArray(res.data.categories)) {
+        categoryData = res.data.categories;
+      } else if (res?.data?.data && Array.isArray(res.data.data)) {
+        categoryData = res.data.data;
+      } else if (Array.isArray(res?.data)) {
+        categoryData = res.data;
+      }
+      setCategories(Array.isArray(categoryData) ? categoryData : []);
+    } catch (err) {
+      console.error("Failed to fetch categories:", err);
+    }
+  };
+
+  const fetchSubCategories = async () => {
+    try {
+      // @ts-ignore
+      const res = await getAllSubCategories({ limit: 10000 });
+      let subCategoryData = [];
+      if (res?.data?.data?.rows && Array.isArray(res.data.data.rows)) {
+        subCategoryData = res.data.data.rows;
+      } else if (res?.data?.rows && Array.isArray(res.data.rows)) {
+        subCategoryData = res.data.rows;
+      } else if (
+        res?.data?.subcategories &&
+        Array.isArray(res.data.subcategories)
+      ) {
+        subCategoryData = res.data.subcategories;
+      } else if (res?.data?.data && Array.isArray(res.data.data)) {
+        subCategoryData = res.data.data;
+      } else if (Array.isArray(res?.data)) {
+        subCategoryData = res.data;
+      }
+      setSubCategories(subCategoryData);
+    } catch (err) {
+      console.error("Failed to fetch sub-categories:", err);
+    }
+  };
+
+  const fetchLowStock = async () => {
+    try {
+      const res = await getLowStockProducts();
+      if (res?.data?.data?.products) {
+        setLowStockProducts(Array.isArray(res.data.data.products) ? res.data.data.products : []);
+      } else if (res?.data?.products) {
+        setLowStockProducts(Array.isArray(res.data.products) ? res.data.products : []);
+      } else if (Array.isArray(res?.data)) {
+        setLowStockProducts(res.data);
+      }
+    } catch (err) {
+      console.error("Failed to fetch low stock products:", err);
+    }
+  };
+
+  // ✅ Filter products based on search
+  const filteredProducts = products.filter((p) => {
+    const search = searchTerm.toLowerCase().trim();
+    return (
+      (p.productName || "").toLowerCase().includes(search) ||
+      (p.brandName || "").toLowerCase().includes(search) ||
+      (p.category?.name || "").toLowerCase().includes(search) ||
+      (p.itemCode || "").toLowerCase().includes(search)
+    );
+  });
+
+  // Filter low stock products to show those below their individual threshold
+  const displayableLowStockProducts = lowStockProducts.filter((p: any) => {
+    const threshold = p.lowStockThreshold ?? 10; // Default to 10 if not set
+    return (p.stock ?? 0) <= threshold;
+  });
+
+  // Helper function to get threshold for a product
+  const getProductThreshold = (productId: string) => {
+    const lowStockProd = lowStockProducts.find((p: any) => p._id === productId);
+    return lowStockProd?.lowStockThreshold ?? 10;
+  };
+
+  const totalPages = Math.ceil(filteredProducts.length / itemsPerPage);
+  const startIndex = (currentPage - 1) * itemsPerPage;
+  const endIndex = Math.min(startIndex + itemsPerPage, filteredProducts.length);
+  const currentProducts = filteredProducts.slice(startIndex, endIndex);
+
+  const handleSearchChange = (e) => {
+    setSearchTerm(e.target.value);
+    setCurrentPage(1);
+  };
+
+  const resetForm = () => {
+    setFormData({
+      productName: "", category: "", subcategory: "", mrp: "", costPrice: "", stock: "", gst: "",
+      brandName: "", company: "", itemCode: "", hsnCode: "", size: "",
+      discount: "", packSize: "", description: "", image: "",
+    });
+    setImagePreview(null);
+    setImageFile(null);
+    setErrors({});
+    setEditingProduct(null);
+  };
+
+  const handleEdit = (product) => {
+    const pCat = product.category;
+    const sCat = product.subcategory;
+
+    let parentCatId = "";
+    let subCatId = "";
+
+    if (pCat) parentCatId = typeof pCat === 'object' ? pCat._id : pCat;
+    if (sCat) subCatId = typeof sCat === 'object' ? sCat._id : sCat;
+
+    if (!parentCatId && subCatId) {
+      // @ts-ignore
+      const sub = subCategories.find(s => s._id === subCatId);
+      if (sub) {
+        const p = sub.parent || sub.category;
+        if (p) parentCatId = typeof p === 'object' ? p._id : p;
+      }
+    }
+
+    if (!subCatId && parentCatId) {
+      // @ts-ignore
+      const subAsCat = subCategories.find(s => s._id === parentCatId);
+      if (subAsCat) {
+        subCatId = parentCatId;
+        const p = subAsCat.parent || subAsCat.category;
+        if (p) parentCatId = typeof p === 'object' ? p._id : p;
+      }
+    }
+
+    setEditingProduct(product);
+    setFormData({
+      brandName: product.brandName || "",
+      productName: product.productName || "",
+      category: parentCatId || "",
+      subcategory: subCatId || "",
+      company: product.company || "", // Kept for compatibility if needed
+      mrp: product.mrp ?? "",
+      costPrice: product.costPrice ?? "",
+      stock: product.stock ?? "",
+      itemCode: product.itemCode || "",
+      gst: product.gst ?? "",
+      hsnCode: product.hsnCode || "",
+      size: product.size || "",
+      discount: product.discount ?? "",
+      packSize: product.packSize || "",
+      description: product.description || "",
+      image: product.image || "",
+    });
+    setImagePreview(product.image || null);
+    setImageFile(null);
+    setShowForm(true);
+  };
+
+  const handleDelete = async (id) => {
+    if (window.confirm("Are you sure you want to delete this product?")) {
+      try {
+        await deleteProduct({ id });
+        toast.success("Product deleted successfully!");
+        await fetchProducts();
+        fetchLowStock();
+      } catch (err) {
+        console.error("Delete error:", err);
+        toast.error("Failed to delete product.");
+      }
+    }
+  };
+
+  const handleView = (product) => {
+    setViewingProduct(product);
+  };
+
+  const handleFormChange = (e) => {
+    const { name, value } = e.target;
+    setFormData((prev) => ({ ...prev, [name]: value }));
+    if (errors[name]) {
+      setErrors((prev: any) => ({ ...prev, [name]: undefined }));
+    }
+  };
+
+  const handleCategoryChange = (value) => {
+    setFormData({ ...formData, category: value, subcategory: "" });
+  };
+
+  const handleSubCategoryChange = (value) => {
+    setFormData({ ...formData, subcategory: value });
+  };
+
+  const handleImageChange = (e) => {
+    const file = e.target.files[0];
+    if (file) {
+      setImageFile(file);
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        setImagePreview(reader.result);
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
+  const removeImage = () => {
+    setImageFile(null);
+    setImagePreview(editingProduct?.image || null);
+    setFormData((prev) => ({ ...prev, image: editingProduct?.image || "" }));
+  };
+
+  const handleSubmit = async () => {
+    // Basic validation
+    if (!formData.productName || !formData.category || !formData.mrp || formData.stock === "") {
+      toast.error("Please fill all required fields.");
+      return;
+    }
+    setFormLoading(true);
+    try {
+      const payload = {
+        brandName: formData.brandName,
+        productName: formData.productName,
+        category: formData.category,
+        subcategory: formData.subcategory || null,
+        company: formData.company,
+        mrp: parseFloat(formData.mrp) || 0, // Keep as float
+        costPrice: parseFloat(formData.costPrice) || 0, // Add costPrice
+        stock: parseInt(formData.stock, 10) || 0, // Keep as integer
+        itemCode: formData.itemCode,
+        gst: parseFloat(formData.gst) || 0, // Keep as float
+        hsnCode: formData.hsnCode,
+        size: formData.size, // Add size
+        discount: formData.discount,
+        packSize: formData.packSize, // Add packSize
+        description: formData.description,
+      };
+
+      if (imageFile) {
+        toast.info("Image upload not implemented yet. Other fields will be updated.");
+      } else if (formData.image && !imageFile) {
+        //@ts-ignore
+        payload.image = formData.image;
+      }
+
+      if (editingProduct) {
+        await updateProduct({ id: editingProduct._id, data: payload });
+        toast.success("Product updated successfully!");
+      }
+
+      setShowForm(false);
+      resetForm();
+      await fetchProducts();
+      fetchLowStock();
+    } catch (err) {
+      console.error("Submit Error:", err);
+      toast.error(err.response?.data?.message || "Failed to save product.");
+    } finally {
+      setFormLoading(false);
+    }
+  };
+
+  const handleStockUpdateSubmit = async () => {
+    if (!stockUpdateProduct || newStockValue === "") return;
+    
+    const newStock = Number(newStockValue);
+    // Get max threshold from lowStockProducts which has the complete data
+    const productWithThreshold = lowStockProducts.find((p: any) => p._id === stockUpdateProduct._id);
+    const maxThreshold = productWithThreshold?.maxStockThreshold;
+
+    // Check if new stock exceeds max stock threshold
+    if (maxThreshold !== undefined && newStock > maxThreshold) {
+      toast.error(`Maximum limit is ${maxThreshold} units`);
+      return;
+    }
+
+    try {
+      await updateProductStock({ id: stockUpdateProduct._id, stock: newStock });
+      toast.success("Stock updated successfully!");
+      setShowStockUpdate(false);
+      setStockUpdateProduct(null);
+      setNewStockValue("");
+      fetchLowStock();
+      fetchProducts();
+    } catch (err) {
+      console.error("Failed to update stock:", err);
+      toast.error("Failed to update stock.");
+    }
+  };
+
+  const handleAlertChange = async (type: 'email' | 'push', value: boolean) => {
+    if (type === 'email') setEmailAlert(value);
+    if (type === 'push') setPushAlert(value);
+
+    try {
+      await updateLowStockSettings({
+        data: {
+          emailAlert: type === 'email' ? value : emailAlert,
+          pushAlert: type === 'push' ? value : pushAlert
+        }
+      });
+      toast.success(`${type === 'email' ? 'Email' : 'Push'} alerts ${value ? 'enabled' : 'disabled'}`);
+    } catch (err) {
+      console.error("Failed to update alert settings:", err);
+      toast.error("Failed to update settings.");
+    }
+  };
+
+  const handleStockThreshold = (product: any) => {
+    // Get the product with threshold data from lowStockProducts first, then products
+    const productWithThreshold = lowStockProducts.find((p: any) => p._id === product._id) 
+      || products.find((p: any) => p._id === product._id)
+      || product;
+    setThresholdProduct(product);
+    setThresholdLow(productWithThreshold.lowStockThreshold?.toString() || "");
+    setThresholdMax(productWithThreshold.maxStockThreshold?.toString() || "");
+    setThresholdDialogOpen(true);
+  };
+
+  // Update threshold values when dialog opens and lowStockProducts changes
+  useEffect(() => {
+    if (thresholdDialogOpen && thresholdProduct) {
+      const productWithThreshold = lowStockProducts.find((p: any) => p._id === thresholdProduct._id) 
+        || products.find((p: any) => p._id === thresholdProduct._id)
+        || thresholdProduct;
+      setThresholdLow(productWithThreshold.lowStockThreshold?.toString() || "");
+      setThresholdMax(productWithThreshold.maxStockThreshold?.toString() || "");
+    }
+  }, [thresholdDialogOpen, lowStockProducts, thresholdProduct, products]);
+
+  const saveStockThreshold = async () => {
+    if (!thresholdProduct) return;
+
+    try {
+      await setStockThresholds({
+        id: thresholdProduct._id,
+        lowStockThreshold: thresholdLow ? parseInt(thresholdLow) : undefined,
+        maxStockThreshold: thresholdMax ? parseInt(thresholdMax) : undefined,
+      });
+      toast.success("Stock thresholds updated successfully!");
+      setThresholdDialogOpen(false);
+      setThresholdProduct(null);
+      setThresholdLow("");
+      setThresholdMax("");
+      await fetchProducts();
+      await fetchLowStock(); // Await this to ensure data is refreshed
+    } catch (error: any) {
+      toast.error(
+        error.response?.data?.message || "Failed to update thresholds."
+      );
+    }
+  };
+
+  const getStockColor = (stock, product) => {
+    const threshold = getProductThreshold(product._id);
+    if (stock <= threshold) return "text-red-600";
+    if (stock > threshold && stock <= 50) return "text-yellow-600";
+    return "text-green-600";
+  };
+
+  const getCategoryName = (product: any) => {
+    const pCat = product.category;
+    const sCatRef = product.subcategory;
+    
+    if (pCat && typeof pCat === 'object' && pCat.name) {
+         return pCat.name;
+    }
+
+    if (sCatRef) {
+         const sId = typeof sCatRef === 'object' ? sCatRef._id : sCatRef;
+         const sub = subCategories.find(s => s._id === sId);
+         if (sub) {
+             const p = sub.parent || sub.category;
+             const pId = (p && typeof p === 'object') ? p._id : p;
+             const parent = categories.find(c => c._id === pId);
+             if (parent) return parent.name;
+         }
+    }
+    
+    if (pCat) {
+         const pId = typeof pCat === 'object' ? pCat._id : pCat;
+         const subAsCat = subCategories.find(s => s._id === pId);
+         if (subAsCat) {
+             const p = subAsCat.parent || subAsCat.category;
+             const pIdReal = (p && typeof p === 'object') ? p._id : p;
+             const parent = categories.find(c => c._id === pIdReal);
+             if (parent) return parent.name;
+         }
+         const cat = categories.find(c => c._id === pId);
+         if (cat) return cat.name;
+    }
+    
+    return "N/A";
+  };
+
+  const getSubCategoryName = (product: any) => {
+    const sCat = product.category;
+    const realSub = product.subcategory;
+
+    if (realSub) {
+         if (typeof realSub === 'object' && realSub.name) return realSub.name;
+         const sub = subCategories.find(s => s._id === realSub);
+         if (sub) return sub.name;
+    }
+    
+    if (sCat) {
+         const sId = typeof sCat === 'object' ? sCat._id : sCat;
+         const subObj = subCategories.find(s => s._id === sId);
+         if (subObj) return subObj.name;
+    }
+    
+    return "N/A";
+  };
+
+  if (loading) {
+    return (
+      <AdminLayout title="Inventory Tracking">
+        <div className="flex justify-center items-center h-64">Loading inventory...</div>
+      </AdminLayout>
+    );
+  }
+
+  return (
+    <AdminLayout title="Inventory Tracking">
+      <style>{`
+        input[type=number]::-webkit-inner-spin-button, 
+        input[type=number]::-webkit-outer-spin-button { 
+          -webkit-appearance: none; 
+          margin: 0; 
+        }
+        input[type=number] {
+          -moz-appearance: textfield;
+        }
+      `}</style>
+      <div
+        className="flex flex-col xl:flex-row gap-4 md:gap-6 w-full"
+      >
+        <div className="flex-1 space-y-4 md:space-y-6 min-w-0">
+          {/* 🔍 Search Bar */}
+          <div className="flex flex-wrap justify-between items-center gap-3 md:gap-4">
+            <div className="relative w-full sm:w-full max-w-md">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-6 h-4 sm:w-5 sm:h-5 text-muted-foreground" />
+              <Input
+                placeholder="Search by name, brand, category or code"
+                className="pl-9 sm:pl-10 pr-4 py-2 text-sm bg-[#FEEEE5] border-0 rounded-full shadow-sm focus:ring-2 focus:ring-[#007E66]"
+                value={searchTerm}
+                onChange={handleSearchChange}
+              />
+            </div>
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button onClick={() => setViewThresholdsDialogOpen(true)} className="whitespace-nowrap" style={{backgroundColor: "#FEEEE5", color: "#000"}}>
+                    View All Thresholds
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>
+                  <p>View thresholds for all products.</p>
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+          </div>
+
+          {/* 🖥️ Desktop Table */}
+          <div className="bg-white rounded-xl shadow-sm overflow-hidden border border-gray-100 hidden lg:block">
+            <div className="overflow-x-auto max-h-[600px]">
+              <table className="w-full text-sm">
+                <thead className="bg-gray-100 border-b border-border text-gray-700 sticky top-0 z-10">
+                  <tr className="text-left text-xs lg:text-sm font-medium">
+                    <th className="px-4 py-3">Item Code</th>
+                    <th className="px-4 py-3">Brand</th>
+                    <th className="px-4 py-3">Category</th>
+                    <th className="px-4 py-3">Sub Category</th>
+                    <th className="px-4 py-3">Thumbnail</th>
+                    <th className="px-4 py-3">Name</th>
+                    <th className="px-4 py-3">Quantity</th>
+                    <th className="px-4 py-3">Price</th>
+                    <th className="px-4 py-3">Stock</th>
+                    <th className="px-4 py-3 text-right">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-border">
+                  {currentProducts.length > 0 ? (
+                      currentProducts.map((product, index) => (
+                        <tr
+                          key={product._id}
+                          className="hover:bg-gray-50 transition-colors"
+                        >
+                          <td className="px-4 py-3">{product.itemCode || 'N/A'}</td>
+                          <td className="px-4 py-3">{product.brandName || 'N/A'}</td>
+                          <td className="px-4 py-3">{getCategoryName(product)}</td>
+                          <td className="px-4 py-3">{getSubCategoryName(product)}</td>
+                          <td className="px-4 py-3">
+                            <div className="w-10 h-10 bg-gray-100 rounded-md flex items-center justify-center overflow-hidden">
+                              {product.image ?
+                                <img src={product.image} alt={product.productName} className="object-cover w-full h-full" />
+                               :
+                                <ImageIcon className="w-5 h-5 text-gray-400" />
+                              }
+                            </div>
+                          </td>
+                          <td className="px-4 py-3 max-w-[200px] truncate">
+                            <div>
+                              <p>{product.productName || 'N/A'}</p>
+                            </div>
+                          </td>
+                          <td className="px-4 py-3">{product.stock ?? 0}</td>
+                          <td className="px-4 py-3">Rs. {product.mrp || 0}</td>
+                          <td className="px-4 py-3">
+                            <span className={`font-semibold ${getStockColor(product.stock, product)}`}>
+                              {product.stock > 0
+                                ? product.stock <= getProductThreshold(product._id)
+                                  ? `Low Stock (${product.stock})`
+                                  : product.stock
+                                : "Out of stock"}
+                            </span>
+                          </td>
+                          <td className="px-4 py-3 text-right">
+                            <DropdownMenu>
+                              <DropdownMenuTrigger asChild>
+                                <button className="p-1 hover:bg-gray-100 rounded">
+                                  <MoreVertical className="w-4 h-4 text-gray-500" />
+                                </button>
+                              </DropdownMenuTrigger>
+                              <DropdownMenuContent align="end" className="bg-white shadow-md">
+                                <DropdownMenuItem onClick={() => handleEdit(product)}>Edit Product</DropdownMenuItem>
+                                <DropdownMenuItem onClick={() => handleStockThreshold(product)}>Stock Thresholds</DropdownMenuItem>
+                                <DropdownMenuItem onClick={() => handleView(product)}>View Detail</DropdownMenuItem>
+                                <DropdownMenuItem onClick={() => handleDelete(product._id)} className="text-red-600">Delete</DropdownMenuItem>
+                              </DropdownMenuContent>
+                            </DropdownMenu>
+                          </td>
+                        </tr>
+                      ))
+                    ) : (
+                    <tr>
+                      <td colSpan={10} className="px-4 py-6 text-center text-gray-500">
+                        No products found
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+
+            {/* 📄 Pagination */}
+            {filteredProducts.length > 0 && (
+              <div className="flex flex-col sm:flex-row items-center justify-between px-4 py-3 border-t bg-gray-50 gap-3">
+                <div className="text-xs sm:text-sm text-gray-600">
+                  Showing {startIndex + 1} to {endIndex} of{" "}
+                  {filteredProducts.length} entries
+                </div>
+                <div className="flex gap-1 flex-wrap justify-center">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                    disabled={currentPage === 1}
+                    className="h-8 text-xs"
+                  >
+                    Previous
+                  </Button>
+                  {Array.from({ length: totalPages }).map((_, i) => (
+                    <Button
+                      key={i + 1}
+                      variant={currentPage === i + 1 ? "default" : "outline"}
+                      size="sm"
+                      onClick={() => setCurrentPage(i + 1)}
+                      className="h-8 w-8 p-0 text-xs"
+                    >
+                      {i + 1}
+                    </Button>
+                  ))}
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+                    disabled={currentPage === totalPages}
+                    className="h-8 text-xs"
+                  >
+                    Next
+                  </Button>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* 📱 Mobile Card View */}
+          <div className="lg:hidden space-y-3">
+            {currentProducts.length > 0 ? (
+                currentProducts.map((product, index) => (
+                  <div
+                    key={product._id}
+                    className="bg-white p-4 rounded-xl shadow-sm border border-gray-100 space-y-2"
+                  >
+                    <div className="flex justify-between items-start">
+                      <div className="flex gap-3">
+                        <div className="w-14 h-14 bg-gray-100 rounded-md flex items-center justify-center overflow-hidden flex-shrink-0">
+                          {product.image ?
+                            <img src={product.image} alt={product.productName} className="object-cover w-full h-full" />
+                           :
+                            <ImageIcon className="w-6 h-6 text-gray-400" />
+                          }
+                        </div>
+                        <div>
+                          <h3 className="font-medium text-sm">{product.productName || 'N/A'}</h3>
+                          <p className="text-xs text-gray-500">
+                            {product.brandName || 'N/A'} • {getCategoryName(product)} / {getSubCategoryName(product)}
+                          </p>
+                          <p className="text-xs text-gray-400">{product.itemCode || 'N/A'}</p>
+                        </div>
+                      </div>
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <button className="p-1 hover:bg-gray-100 rounded">
+                            <MoreVertical className="w-4 h-4 text-gray-500" />
+                          </button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end">
+                          <DropdownMenuItem onClick={() => handleEdit(product)}>Edit Product</DropdownMenuItem>
+                          <DropdownMenuItem onClick={() => handleView(product)}>View Detail</DropdownMenuItem>
+                          <DropdownMenuItem onClick={() => handleDelete(product._id)} className="text-red-600">Delete</DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2 text-xs pt-2 border-t border-gray-100 mt-2">
+                      <p><span className="text-gray-500">Qty: </span>{product.stock ?? 0}</p>
+                      <p><span className="text-gray-500">Price: </span>Rs. {product.mrp || 0}</p>
+                      <p>
+                        <span className="text-gray-500">Stock: </span>
+                        <span className={getStockColor(product.stock, product)}>
+                          {product.stock > 0
+                            ? product.stock <= (product.lowStockThreshold ?? 10)
+                              ? `Low Stock (${product.stock})`
+                              : product.stock
+                            : "Out of stock"}
+                        </span>
+                      </p>
+                    </div>
+                  </div>
+                ))
+              ) : (
+              <div className="bg-white p-8 rounded-xl shadow-sm border border-gray-100 text-center text-gray-500">
+                No products found
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* ⚙️ Right Panel */}
+        <div className="xl:w-[320px] w-full bg-white rounded-xl shadow-sm border border-gray-100 p-4 md:p-5 h-fit xl:sticky xl:top-24 self-start">
+          <div className="mb-3">
+            <h3 className="text-base md:text-lg font-semibold text-gray-800">
+              Low Stock Alert
+            </h3>
+          </div>
+
+          <div className="space-y-3 max-h-[300px] overflow-y-auto mb-4">
+            {displayableLowStockProducts.length > 0 ? (
+              displayableLowStockProducts.map((product: any) => (
+                <div key={product._id} className="bg-red-50 p-3 rounded-md border border-red-200">
+                  <p className="text-xs sm:text-sm text-red-700 font-medium">
+                    {product.productName} – <span className="font-semibold">{product.stock} Units remaining</span>
+                  </p>
+                </div>
+              ))
+            ) : (
+              <p className="text-sm text-gray-500">No low stock alerts.</p>
+            )}
+          </div>
+
+          <div className="pt-4 border-t border-gray-200 mt-3 space-y-4">
+            <select 
+              className="w-full border border-gray-300 rounded-md px-3 py-2 text-xs sm:text-sm focus:outline-none focus:ring-2 focus:ring-[#007E66]"
+              onChange={(e) => {
+                const product = displayableLowStockProducts.find((p: any) => p._id === e.target.value);
+                if (product) {
+                  setStockUpdateProduct(product);
+                  setNewStockValue(product.stock);
+                  setShowStockUpdate(true);
+                }
+                e.target.value = "Update Stock"; // Reset selection
+              }}
+            >
+              <option>Update Stock</option>
+              {displayableLowStockProducts.map((p: any) => (
+                <option key={p._id} value={p._id}>{p.productName}</option>
+              ))}
+            </select>
+
+            <div className="space-y-3 border-t pt-4">
+              <div className="flex items-center justify-between">
+                <label className="text-xs sm:text-sm font-medium text-gray-700">Email Alert</label>
+                <Switch checked={emailAlert} onCheckedChange={(val) => handleAlertChange('email', val)} />
+              </div>
+              <div className="flex items-center justify-between">
+                <label className="text-xs sm:text-sm font-medium text-gray-700">Push Alert</label>
+                <Switch checked={pushAlert} onCheckedChange={(val) => handleAlertChange('push', val)} />
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* View Details Dialog */}
+      <Dialog open={!!viewingProduct} onOpenChange={() => setViewingProduct(null)}>
+        <DialogContent className="sm:max-w-3xl max-h-[90vh] flex flex-col">
+          <DialogHeader>
+            <DialogTitle>Product Details</DialogTitle>
+            <DialogDescription>
+              Detailed information about{" "}
+              <span className="font-bold">{viewingProduct?.productName}</span>.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-4 py-4 overflow-y-auto px-1">
+            {viewingProduct && (
+              <div className="grid md:grid-cols-3 gap-8">
+                {/* Left Column: Image & Barcode */}
+                <div className="md:col-span-1 space-y-6">
+                  <div className="space-y-2">
+                    <Label className="text-muted-foreground">
+                      Product Image
+                    </Label>
+                    {viewingProduct.image ? (
+                      <div className="aspect-square w-full bg-muted rounded-lg flex items-center justify-center overflow-hidden border">
+                        <img
+                          src={viewingProduct.image}
+                          alt={viewingProduct.productName}
+                          className="w-full h-full object-cover"
+                        />
+                      </div>
+                    ) : (
+                      <div className="aspect-square w-full bg-muted rounded-lg flex items-center justify-center border">
+                        <ImageIcon className="w-16 h-16 text-muted-foreground/50" />
+                      </div>
+                    )}
+                  </div>
+                  <div className="space-y-2">
+                    <Label className="text-muted-foreground">Barcode</Label>
+                    <div className="bg-white p-4 rounded-lg border flex flex-col items-center">
+                      <Barcode
+                        value={viewingProduct.itemCode || "NO-CODE"}
+                        width={1.5}
+                        height={60}
+                        fontSize={14}
+                        displayValue={false}
+                      />
+                      <p className="mt-2 text-xs text-muted-foreground tracking-widest">
+                        {viewingProduct.itemCode || "N/A"}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Right Column: Details */}
+                <div className="md:col-span-2 space-y-6">
+                  {/* Header */}
+                  <div>
+                    <Badge
+                      variant={
+                        viewingProduct.stock > 0 ? "default" : "destructive"
+                      }
+                      className={
+                        viewingProduct.stock > 0
+                          ? "bg-green-100 text-green-800"
+                          : ""
+                      }
+                    >
+                      {viewingProduct.stock > 0 ? "In Stock" : "Out of Stock"}
+                    </Badge>
+                    <h2 className="text-2xl font-bold mt-2">
+                      {viewingProduct.productName}
+                    </h2>
+                    <p className="text-muted-foreground">
+                      {viewingProduct.brandName || "No Brand"}
+                    </p>
+                  </div>
+
+                  {/* General Info */}
+                  <div className="border-t pt-4">
+                    <h3 className="font-semibold mb-3">General Information</h3>
+                    <div className="grid grid-cols-2 gap-x-4 gap-y-3 text-sm">
+                      <div className="flex flex-col">
+                        <span className="text-muted-foreground">Category</span>
+                        <span className="font-medium">
+                          {getCategoryName(viewingProduct)}
+                        </span>
+                      </div>
+                      <div className="flex flex-col">
+                        <span className="text-muted-foreground">
+                          Sub Category
+                        </span>
+                        <span className="font-medium">
+                          {getSubCategoryName(viewingProduct)}
+                        </span>
+                      </div>
+                      <div className="flex flex-col">
+                        <span className="text-muted-foreground">Item Code</span>
+                        <span className="font-medium">
+                          {viewingProduct?.itemCode || "N/A"}
+                        </span>
+                      </div>
+                      <div className="flex flex-col">
+                        <span className="text-muted-foreground">HSN Code</span>
+                        <span className="font-medium">
+                          {viewingProduct?.hsnCode || "N/A"}
+                        </span>
+                      </div>
+                      <div className="flex flex-col">
+                        <span className="text-muted-foreground">Size & Weight</span>
+                        <span className="font-medium">
+                          {viewingProduct?.size || "N/A"}
+                        </span>
+                      </div>
+                      <div className="flex flex-col">
+                        <span className="text-muted-foreground">Pack Size</span>
+                        <span className="font-medium">
+                          {viewingProduct?.packSize || "N/A"}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Pricing & Inventory */}
+                  <div className="border-t pt-4">
+                    <h3 className="font-semibold mb-3">Pricing & Inventory</h3>
+                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-3 text-sm">
+                      <div className="flex flex-col">
+                        <span className="text-muted-foreground">MRP</span>
+                        <span className="font-medium">
+                          ₹{viewingProduct.mrp?.toFixed(2) || "0.00"}
+                        </span>
+                      </div>
+                      <div className="flex flex-col">
+                        <span className="text-muted-foreground">
+                          Cost Price
+                        </span>
+                        <span className="font-medium">
+                          ₹{viewingProduct.costPrice?.toFixed(2) || "0.00"}
+                        </span>
+                      </div>
+                      <div className="flex flex-col">
+                        <span className="text-muted-foreground">Discount</span>
+                        <span className="font-medium">
+                          {viewingProduct.discount || "0"}%
+                        </span>
+                      </div>
+                      <div className="flex flex-col">
+                        <span className="text-muted-foreground">GST</span>
+                        <span className="font-medium">
+                          {viewingProduct.gst || "0"}%
+                        </span>
+                      </div>
+                      <div className="flex flex-col">
+                        <span className="text-muted-foreground">Stock</span>
+                        <span className="font-medium">
+                          {viewingProduct.stock || "0"}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Description */}
+                  {viewingProduct.description && (
+                    <div className="border-t pt-4">
+                      <h3 className="font-semibold mb-2">Description</h3>
+                      <p className="text-sm text-muted-foreground">
+                        {viewingProduct.description}
+                      </p>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setViewingProduct(null)}>Close</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Stock Update Dialog */}
+      <Dialog open={showStockUpdate} onOpenChange={setShowStockUpdate}>
+        <DialogContent className="sm:max-w-[400px]">
+          <DialogHeader>
+            <DialogTitle>Update Stock</DialogTitle>
+            <DialogDescription>
+              Update inventory count for <span className="font-semibold text-gray-900">{stockUpdateProduct?.productName}</span>
+            </DialogDescription>
+          </DialogHeader>
+          <div className="py-4">
+            <label className="block text-sm font-medium mb-2">New Stock Quantity</label>
+            <Input
+              type="number"
+              value={newStockValue}
+              onChange={(e) => setNewStockValue(e.target.value)}
+              placeholder="Enter new stock quantity"
+            />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowStockUpdate(false)}>Cancel</Button>
+            <Button onClick={handleStockUpdateSubmit} className="bg-[#119D82] hover:bg-[#0e866f]">Update Stock</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Add/Edit Modal */}
+      <Dialog open={showForm} onOpenChange={(open) => {
+        setShowForm(open);
+        if (!open) {
+          setEditingProduct(null);
+          resetForm();
+        }
+      }}>
+        <DialogContent className="sm:max-w-3xl max-h-[90vh] flex flex-col">
+          <DialogHeader>
+            <DialogTitle>{editingProduct ? "Edit Product" : "Add Product"}</DialogTitle>
+            <DialogDescription>
+              {editingProduct ? "Make changes to the product details here." : "Enter details for the new product."}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-4 py-4 overflow-y-auto px-1">
+            <div className="space-y-2">
+              <Label>Product Image</Label>
+              <div className="border-2 border-dashed border-[#119D82] rounded-lg p-6 text-center">
+                <label htmlFor="image-upload" className="cursor-pointer flex flex-col items-center justify-center space-y-3">
+                  {imagePreview ? (
+                    <img src={imagePreview} alt="Preview" className="w-32 h-32 object-cover rounded-md border" />
+                  ) : (
+                    <>
+                      <div className="w-12 h-12 rounded-full bg-gray-100 flex items-center justify-center">
+                        <ImageIcon className="w-6 h-6 text-gray-400" />
+                      </div>
+                      <span className="text-[#119D82] font-medium text-sm">Click to upload</span>
+                      <p className="text-xs text-gray-500">PNG, JPG, or WEBP</p>
+                    </>
+                  )}
+                </label>
+                <input id="image-upload" type="file" accept="image/*" className="hidden" onChange={handleImageChange} />
+                {imagePreview && (
+                  <div className="mt-3"><Button variant="ghost" size="sm" className="text-red-500 hover:text-red-600" onClick={removeImage}>Remove</Button></div>
+                )}
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              {[
+                { label: "Product Name", name: "productName", required: true },
+                { label: "Brand Name", name: "brandName" },
+                { label: "Category", name: "category", required: true },
+                {
+                  label: "MRP",
+                  name: "mrp",
+                  type: "number",
+                  required: true,
+                  placeholder: "e.g., 199.99",
+                },
+                {
+                  label: "Cost Price",
+                  name: "costPrice",
+                  type: "number",
+                  required: true,
+                  placeholder: "Cost Price",
+                },
+                {
+                  label: "Stock",
+                  name: "stock",
+                  type: "number",
+                  required: true,
+                  placeholder: "e.g., 100",
+                },
+                {
+                  label: "Item Code",
+                  name: "itemCode",
+                  placeholder: "for eg., CGS1234",
+                },
+                {
+                  label: "GST %",
+                  name: "gst",
+                  type: "number",
+                  required: true,
+                  placeholder: "e.g., 18",
+                },
+                {
+                  label: "HSN Code",
+                  name: "hsnCode",
+                  placeholder: "e.g., 12345678",
+                },
+                {
+                  label: "Size & Weight",
+                  name: "size",
+                  placeholder: "e.g., Small, Medium, Large",
+                },
+                {
+                  label: "Discount %",
+                  name: "discount",
+                  type: "number",
+                  placeholder: "e.g., 10",
+                },
+                {
+                  label: "Pack Size",
+                  name: "packSize",
+                  placeholder: "e.g., 1, 6, 12",
+                },
+              ].map((field) => (
+                <div key={field.name} className={field.name === "category" ? "sm:col-span-2" : "grid gap-2"}>
+                  {field.name === "category" ? (
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="grid gap-2">
+                        <Label>
+                          Category{" "}
+                          <span className="text-red-500">*</span>
+                        </Label>
+                        <Select onValueChange={handleCategoryChange} value={formData.category}>
+                          <SelectTrigger><SelectValue placeholder="Select a category" /></SelectTrigger>
+                          <SelectContent>
+                            {categories.filter((c: any) => !c.parent).map((cat: any) => (
+                              <SelectItem key={cat._id} value={cat._id}>{cat.name}</SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                        {errors.category && (
+                          <p className="text-xs text-red-500 mt-1">
+                            {errors.category}
+                          </p>
+                        )}
+                      </div>
+                      <div className="grid gap-2">
+                        <Label>
+                          Sub Category
+                        </Label>
+                        <Select onValueChange={handleSubCategoryChange} value={formData.subcategory}>
+                          <SelectTrigger><SelectValue placeholder="Select a sub-category" /></SelectTrigger>
+                          <SelectContent>
+                            {subCategories
+                              .map((sub: any) => (
+                                <SelectItem key={sub._id} value={sub._id}>{sub.name}</SelectItem>
+                              ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    </div>
+                  ) : (
+                    <>
+                      <Label htmlFor={field.name}>
+                        {field.label} {field.required && <span className="text-red-500">*</span>}
+                      </Label>
+                      <Input
+                        id={field.name}
+                        name={field.name}
+                        type={field.type || "text"}
+                        placeholder={
+                          field.placeholder ||
+                          `Enter ${field.label.toLowerCase()}`
+                        }
+                        value={formData[field.name as keyof typeof formData]}
+                        min={field.type === "number" ? 0 : undefined}
+                        onChange={handleFormChange}
+                      />
+                    </>
+                  )}
+                  {errors[field.name] && <span className="text-red-500 text-xs mt-1">{errors[field.name]}</span>}
+                </div>
+              ))}
+              <div className="grid gap-2 sm:col-span-2">
+                <Label htmlFor="description">Description</Label>
+                <Textarea
+                  id="description"
+                  name="description"
+                  placeholder="Enter product description"
+                  value={formData.description}
+                  onChange={handleFormChange}
+                />
+              </div>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => { setShowForm(false); resetForm(); }} disabled={formLoading}>
+                Cancel
+              </Button>
+              <Button
+                className="bg-[#119D82] hover:bg-[#0e866f] text-white"
+                onClick={handleSubmit}
+                disabled={formLoading}
+              >
+                {formLoading ? "Saving..." : "Save Changes"}
+              </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Stock Threshold Modal */}
+      <Dialog open={thresholdDialogOpen} onOpenChange={setThresholdDialogOpen}>
+        <DialogContent className="sm:max-w-[500px]">
+          <DialogHeader>
+            <DialogTitle>Set Stock Thresholds</DialogTitle>
+            <DialogDescription>
+              {thresholdProduct?.productName && (
+                <span>
+                  Set low stock and max stock thresholds for{" "}
+                  <strong>{thresholdProduct.productName}</strong>
+                </span>
+              )}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-4 py-4">
+            <div className="grid gap-2">
+              <Label htmlFor="low-threshold">Low Stock Threshold</Label>
+              <Input
+                id="low-threshold"
+                type="number"
+                min="0"
+                placeholder="Alert when stock goes below this"
+                value={thresholdLow}
+                onChange={(e) => setThresholdLow(e.target.value)}
+              />
+              <p className="text-xs text-muted-foreground">
+                You will get alerts when stock falls below this level
+              </p>
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor="max-threshold">Max Stock Threshold</Label>
+              <Input
+                id="max-threshold"
+                type="number"
+                min="0"
+                placeholder="Prevent ordering when stock exceeds this"
+                value={thresholdMax}
+                onChange={(e) => setThresholdMax(e.target.value)}
+              />
+              <p className="text-xs text-muted-foreground">
+                Orders will be stopped when stock reaches or exceeds this level
+              </p>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setThresholdDialogOpen(false);
+                setThresholdProduct(null);
+                setThresholdLow("");
+                setThresholdMax("");
+              }}
+            >
+              Cancel
+            </Button>
+            <Button onClick={saveStockThreshold}>Save Thresholds</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* View All Thresholds Dialog */}
+      <Dialog open={viewThresholdsDialogOpen} onOpenChange={setViewThresholdsDialogOpen}>
+        <DialogContent className="max-w-4xl max-h-[80vh] flex flex-col">
+          <DialogHeader>
+            <DialogTitle>All Product Thresholds</DialogTitle>
+            <DialogDescription>View and print all product low stock and max stock thresholds</DialogDescription>
+          </DialogHeader>
+          <div id="threshold-print-area" className="space-y-4 overflow-y-auto">
+            <table className="w-full border-collapse border border-gray-300">
+              <thead>
+                <tr className="bg-gray-100">
+                  <th className="border border-gray-300 p-2 text-left">Product Name</th>
+                  <th className="border border-gray-300 p-2 text-left">Brand</th>
+                  <th className="border border-gray-300 p-2 text-center">Low Stock</th>
+                  <th className="border border-gray-300 p-2 text-center">Max Stock</th>
+                  <th className="border border-gray-300 p-2 text-center">Current Stock</th>
+                </tr>
+              </thead>
+              <tbody>
+                {products.map((product: any) => (
+                  <tr key={product._id}>
+                    <td className="border border-gray-300 p-2">{product.productName}</td>
+                    <td className="border border-gray-300 p-2">{product.brandName}</td>
+                    <td className="border border-gray-300 p-2 text-center font-semibold">{product.lowStockThreshold ?? 10}</td>
+                    <td className="border border-gray-300 p-2 text-center font-semibold">{product.maxStockThreshold ?? "-"}</td>
+                    <td className="border border-gray-300 p-2 text-center">{product.stock}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <DialogFooter>
+            <Button style={{backgroundColor: "#E98C81", color: "#fff"}} onClick={() => {
+              const printContent = document.getElementById('threshold-print-area');
+              if (printContent) {
+                const width = 1000;
+                const height = 800;
+                const left = (screen.width / 2) - (width / 2);
+                const top = (screen.height / 2) - (height / 2);
+                const printWindow = window.open('', '', `height=${height},width=${width},top=${top},left=${left}`);
+                printWindow?.document.write('<html><head><title>Product Thresholds</title>');
+                printWindow?.document.write('<style>body{font-family:sans-serif;} table{width:100%; border-collapse:collapse;} th,td{border:1px solid #ddd; padding:8px; text-align:left;} tr:nth-child(even){background-color:#f2f2f2;} th{background-color:#E98C81; color:white;}</style>');
+                printWindow?.document.write('</head><body>');
+                printWindow?.document.write(printContent.innerHTML);
+                printWindow?.document.write('</body></html>');
+                printWindow?.document.close();
+                printWindow?.focus();
+                setTimeout(() => {
+                  printWindow?.print();
+                  printWindow?.close();
+                }, 250);
+              }
+            }}>
+              Print List
+            </Button>
+            <Button style={{backgroundColor: "#E98C81", color: "#fff"}} onClick={() => setViewThresholdsDialogOpen(false)}>
+              Close
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </AdminLayout>
+  );
+}
